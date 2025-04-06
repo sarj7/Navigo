@@ -1,0 +1,8 @@
+^BUILD$
+^compile_commands.json$
+^.clangd$
+^.mbed$
+^.cache$
+^C12832_lcd$
+^MMA7660$
+^mbed$

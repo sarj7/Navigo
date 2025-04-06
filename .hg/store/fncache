@@ -1,0 +1,4 @@
+data/MMA7660.lib.i
+data/C12832_lcd.lib.i
+data/mbed.bld.i
+data/main.cpp.i
