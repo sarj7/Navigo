@@ -1,6 +1,6 @@
 # Navigo - Advanced Pedestrian Dead Reckoning System
 
-![Navigo Logo](images/logo.png)
+![Navigo Logo](images/logo.jpg)
 
 ## Overview
 
