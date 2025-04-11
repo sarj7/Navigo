@@ -1,6 +1,6 @@
 # Navigo - Advanced Pedestrian Dead Reckoning System
 
-![Navigo Logo](https://via.placeholder.com/800x200?text=Navigo:+Pedestrian+Navigation+System)
+![Navigo Logo](images/logo.png)
 
 ## Overview
 
@@ -350,7 +350,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Credits and Acknowledgments
 
-- Developed by [Your Name/Organization]
 - MMA7660 library based on work from the mbed community
 - C12832_lcd library by Peter Drescher (DC2PD)
 - Thanks to the mbed community for their valuable resources and support
