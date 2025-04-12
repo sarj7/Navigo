@@ -6,6 +6,7 @@
 #include "MMA7660.h"
 #include "C12832_lcd.h"
 #include <cmath>
+#include <algorithm>
 
 //-------------------------------------------------------------------------------
 // Hardware Definitions and Initialization
@@ -14,238 +15,125 @@ C12832_LCD lcd;                         // On-board LCD display
 MMA7660 MMA(p28, p27);                  // I2C Accelerometer
 DigitalOut connectionLed(LED1);         // Accelerometer connection indicator
 DigitalOut stepLed(LED2);               // Step detection indicator
-DigitalOut modeLed(LED3);               // System mode indicator
-DigitalOut errorLed(LED4);              // Error indicator
 
 //-------------------------------------------------------------------------------
 // Configuration Parameters 
 //-------------------------------------------------------------------------------
-const float CALIBRATION_TIME = 3.0;     // Seconds for initial calibration phase
-const int WINDOW_SIZE = 20;             // Moving average window size for smoothing
-
-// System operation modes
-enum PDR_Mode { 
-    CALIBRATING,    // Initial calibration in progress
-    READY,          // Calibrated and ready to detect steps
-    ACTIVE          // Actively detecting steps and calculating metrics
-};
+const float CALIBRATION_TIME    = 3.0f;    // Calibration duration (seconds)
+const float STEP_THRESHOLD_INIT = 0.20f;   // Lower initial threshold
+const float MIN_STEP_INTERVAL   = 0.5f;    // Minimum interval between steps (seconds)
+const float ALPHA               = 0.2f;    // Increase smoothing factor for a sharper response
 
 //-------------------------------------------------------------------------------
 // Main Program
 //-------------------------------------------------------------------------------
-int main()
-{
-    //===========================================================================
-    // Variable Initialization
-    //===========================================================================
-    float ax, ay, az;                    // Raw accelerometer readings for each axis
-    float baseline = 0;                  // Baseline (gravity) acceleration magnitude
-    
-    // Signal processing buffer
-    float accelWindow[WINDOW_SIZE] = {0};    // Buffer for moving average filter
-    int windowIndex = 0;                     // Current index in moving average window
+int main() {
+    // Variables for calibration and filtering
+    float ax, ay, az;
+    float baseline = 0.0f;
+    float calibSum = 0.0f;
+    int calibSamples = 0;
     
     // Step detection variables
-    int stepCount = 0;                   // Total valid steps counted
-    bool inStep = false;                 // Step detection state
-    float peakValue = 0;                 // Peak acceleration during step
-    float stepThreshold = 0.15f;         // Threshold to start detecting a step
+    int stepCount = 0;
+    bool inStep = false;
+    float peakValue = 0.0f;
+    float stepThreshold = STEP_THRESHOLD_INIT;
+    float smoothAccel = 0.0f;
     
-    // Timer variables
-    Timer stepTimer;                     // Measures time between steps
-    Timer calibrationTimer;              // Times the calibration phase
-    
-    // System state
-    PDR_Mode currentMode = CALIBRATING;  // Start in calibration mode
-    
-    //===========================================================================
-    // Initialization
-    //===========================================================================
+    // Timers
+    Timer calibTimer, stepTimer;
+    calibTimer.start();
     stepTimer.start();
-    calibrationTimer.start();
     
-    // Initialize display
+    // Startup display and calibration message
     lcd.cls();
     lcd.locate(0, 0);
     lcd.printf("Step Counter v1.0");
     lcd.locate(0, 10);
     lcd.printf("Calibrating...");
     
-    // Check accelerometer connection
+    // Verify accelerometer connection
     if (!MMA.testConnection()) {
-        // Handle connection error
-        errorLed = 1;
-        lcd.locate(0, 20);
-        lcd.printf("Accelerometer Error!");
-        while(1) { wait(0.5); }  // Halt in error state
+        while (1) { wait(0.5); }
     }
+    connectionLed = 1;
     
-    connectionLed = 1;  // Indicate accelerometer connection OK
-    
-    //===========================================================================
-    // Calibration Phase - Measure baseline acceleration (gravity)
-    //===========================================================================
-    float calibSum = 0;
-    int calibSamples = 0;
-    
-    while(calibrationTimer.read() < CALIBRATION_TIME) {
-        // Read accelerometer data
-        ax = MMA.x();
-        ay = MMA.y();
+    // Calibration phase: measure the baseline (gravity magnitude)
+    while (calibTimer.read() < CALIBRATION_TIME) {
+        ax = MMA.x(); 
+        ay = MMA.y(); 
         az = MMA.z();
-        
-        // Calculate acceleration magnitude
         float accel = sqrt(ax*ax + ay*ay + az*az);
-        
-        // Add to calibration sum
         calibSum += accel;
         calibSamples++;
-        
-        // Show calibration progress
-        int progressWidth = (int)(127 * calibrationTimer.read() / CALIBRATION_TIME);
+        // Display calibration progress (progress bar)
+        int progressWidth = (int)(127 * calibTimer.read() / CALIBRATION_TIME);
         lcd.rect(0, 20, progressWidth, 25, 1);
-        
-        wait(0.01);  // Short delay
+        wait(0.01);
     }
-    
-    // Calculate baseline acceleration and set initial threshold
     baseline = calibSum / calibSamples;
     
-    // Transition to READY mode
-    currentMode = READY;
-    modeLed = 1;  // Indicate ready state
-    
-    // Update display for READY state
+    // Ready message
     lcd.cls();
     lcd.locate(0, 0);
-    lcd.printf("Ready - Start walking");
+    lcd.printf("Ready - Walk");
     
-    //===========================================================================
-    // Main Processing Loop
-    //===========================================================================
-    while(1) {
-        // Read accelerometer data for all axes
-        ax = MMA.x();
-        ay = MMA.y();
+    // Main processing loop
+    while (true) {
+        // Read accelerometer and subtract baseline
+        ax = MMA.x(); 
+        ay = MMA.y(); 
         az = MMA.z();
+        float rawAccel = sqrt(ax*ax + ay*ay + az*az) - baseline;
         
-        // Calculate acceleration magnitude and remove baseline
-        float accel = sqrt(ax*ax + ay*ay + az*az) - baseline;
+        // Exponential smoothing
+        smoothAccel = ALPHA * rawAccel + (1.0f - ALPHA) * smoothAccel;
         
-        // Apply simple low-pass filter to reduce noise
-        float filteredAccel = 0;
-        accelWindow[windowIndex] = accel;
-        windowIndex = (windowIndex + 1) % WINDOW_SIZE;
-        
-        for (int i = 0; i < WINDOW_SIZE; i++) {
-            filteredAccel += accelWindow[i];
-        }
-        filteredAccel /= WINDOW_SIZE;
-        
-        // Step detection state machine for more accuracy
+        // Step detection state machine
         if (!inStep) {
-            // Looking for start of step (rising edge)
-            if (filteredAccel > stepThreshold && stepTimer.read() > 0.25) {
+            // Detect rising edge with minimum step interval condition
+            if (smoothAccel > stepThreshold && stepTimer.read() > MIN_STEP_INTERVAL) {
                 inStep = true;
-                peakValue = filteredAccel;
-                currentMode = ACTIVE;
-                
-                // When step starts, LED on
+                peakValue = smoothAccel;
                 stepLed = 1;
             }
         } else {
-            // In step - track peak and look for completion
-            
-            // Update peak if we find a higher value
-            if (filteredAccel > peakValue) {
-                peakValue = filteredAccel;
+            // Update peak during the step
+            if (smoothAccel > peakValue) {
+                peakValue = smoothAccel;
             }
-            
-            // Detect end of step (when acceleration drops significantly)
-            if (filteredAccel < (peakValue * 0.4) && stepTimer.read() > 0.35) {
-                // Valid step detected
+            // Detect falling edge: use a fraction of the peak value to register the step end
+            if (smoothAccel < peakValue * 0.7f && stepTimer.read() > MIN_STEP_INTERVAL) {
                 stepCount++;
-                
-                // Update display immediately
+                // Update display with step count and peak value
                 lcd.cls();
-                wait_ms(50);  // Allow the LCD to clear fully
-                
                 lcd.locate(0, 0);
                 lcd.printf("STEP COUNT");
                 lcd.locate(0, 10);
                 lcd.printf("%d", stepCount);
-                
-                // Show step strength
                 lcd.locate(0, 20);
-                lcd.printf("Strength: %.2f", peakValue);
+                lcd.printf("Peak: %.2f", peakValue);
                 
-                wait_ms(50);  // Allow the text to render
+                // Adaptive threshold adjustment
+                float newThreshold = std::min(peakValue * 0.4f, 0.35f);
+                stepThreshold = std::max(STEP_THRESHOLD_INIT, newThreshold);
                 
-                // Adaptive threshold - adjust based on peak value
-                stepThreshold = peakValue * 0.3;
-                if (stepThreshold < 0.1f) stepThreshold = 0.1f;
-                if (stepThreshold > 0.5f) stepThreshold = 0.5f;
-                
-                // Reset for next step
+                // Reset state for next step
                 inStep = false;
                 stepTimer.reset();
-                
-                // Toggle LED for visual feedback
                 stepLed = 0;
-                
-                // Short delay after detection to avoid double-counting
-                wait(0.2);  // Reduced wait time to detect steps that occur closer together
+                wait(0.3f); // Delay to avoid duplicate counts
             }
-            
-            // Timeout for step detection - prevent getting stuck in "in step" state
-            if (stepTimer.read() > 1.5) {
+            // Timeout: reset step detection if it hangs
+            if (stepTimer.read() > 2.0f) {
                 inStep = false;
                 stepTimer.reset();
                 stepLed = 0;
             }
         }
-        
-        // Add a jerk-based detection method to catch steps that the main algorithm might miss
-        // Calculate jerk (rate of change of acceleration)
-        static float prevAccel = 0;
-        float jerk = fabs(filteredAccel - prevAccel) / 0.02;
-        prevAccel = filteredAccel;
-        
-        // If we detect a strong jerk and not already in a step, this might be a step too
-        if (!inStep && jerk > 0.8 && stepTimer.read() > 0.25) {
-            // Use jerk detection as a secondary method
-            stepCount++;
-            
-            // Visual feedback
-            stepLed = !stepLed;
-            
-            // Update display
-            lcd.cls();
-            wait_ms(50);
-            lcd.locate(0, 0);
-            lcd.printf("STEP COUNT");
-            lcd.locate(0, 10);
-            lcd.printf("%d", stepCount);
-            lcd.locate(0, 20);
-            lcd.printf("Jerk: %.2f", jerk);
-            
-            wait_ms(50);
-            
-            // Reset step timer
-            stepTimer.reset();
-            
-            // Small delay to avoid duplicates
-            wait(0.2);
-        }
-        
-        // Lower threshold if we haven't detected steps in a while
-        if (stepTimer.read() > 3.0) {
-            // If no steps for 3 seconds, gradually lower threshold to become more sensitive
-            stepThreshold = max(0.05f, stepThreshold * 0.95f);
-        }
-        
-        // Sample at a consistent rate
-        wait(0.02);
+        // Control sampling rate
+        wait(0.01);
     }
 }
 

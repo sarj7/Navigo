@@ -211,6 +211,52 @@ The system employs a sophisticated multi-stage algorithm to accurately detect st
    - Peak analysis confirms step patterns match typical walking motion
    - Adaptive thresholds adjust to the user's walking style
 
+## Algorithm Description
+
+The step detection system in Navigo uses a multi-stage process to accurately identify steps from accelerometer data:
+
+### 1. Calibration Phase
+- Device measures acceleration magnitude (√(x²+y²+z²)) over 3 seconds while stationary
+- These readings are averaged to establish the baseline gravity magnitude
+- This baseline is subtracted from all future readings to isolate user movement
+
+### 2. Signal Processing
+- Raw acceleration magnitude has baseline gravity subtracted
+- Exponential smoothing is applied using the formula:
+  ```
+  smoothAccel = α × rawAccel + (1-α) × smoothAccel
+  ```
+  where α = 0.2, providing responsive yet stable measurements
+
+### 3. Step Detection State Machine
+The algorithm uses a two-state machine to detect the characteristic acceleration pattern during a step:
+
+- **Rising Edge Detection (State: Not In Step)**
+  - Waits for smoothed acceleration to exceed the threshold (initially 0.20)
+  - Ensures minimum 0.5s has passed since the last step
+  - When conditions are met, enters "In Step" state and begins tracking the peak
+
+- **Peak Tracking & Falling Edge Detection (State: In Step)**
+  - Continuously updates the peak acceleration value during the step
+  - Detects step completion when acceleration falls below 70% of the measured peak
+  - Requires minimum time (0.5s) to have passed to avoid false positives
+  - Increments step counter when a complete step cycle is detected
+  - Includes a 2.0s timeout to reset if the step pattern isn't completed
+
+### 4. Adaptive Threshold Adjustment
+- After each detected step, the threshold is recalculated:
+  ```
+  newThreshold = min(peakValue × 0.4, 0.35)
+  stepThreshold = max(0.20, newThreshold)
+  ```
+- This allows the system to adapt to different walking intensities while maintaining stability
+
+### 5. Anti-Bounce Protection
+- 0.3 second delay after each step to prevent double-counting
+- LED provides visual feedback for each detected step
+
+The system samples at 100Hz (every 0.01 seconds) to maintain responsive performance while conserving power.
+
 ## Performance Optimization
 
 The algorithm has been fine-tuned for optimal performance with the following considerations:
